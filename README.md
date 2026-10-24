@@ -226,4 +226,4 @@ These checks cover source syntax, the strength grid, command arguments, generati
 
 ## Acknowledgments
 
-This code builds on SDXL, Hugging Face Diffusers, Transfer-Learning-Library, SDAT, ELS, and SSRT. See [THIRD_PARTY.md](THIRD_PARTY.md) for sources, retained notices, and the outstanding ELS redistribution permission.
+This code builds on SDXL, Hugging Face Diffusers, Transfer-Learning-Library, SDAT, ELS, and SSRT. See [THIRD_PARTY.md](THIRD_PARTY.md) for sources, retained notices, and the ELS redistribution permission.
