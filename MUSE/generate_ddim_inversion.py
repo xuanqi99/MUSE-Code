@@ -615,8 +615,8 @@ def parse_args():
     parser.add_argument("--cross_attention_scale", type=float, default=0.9)
     parser.add_argument("--lora_scale", type=float, default=1.0)
     parser.add_argument("--inversion_lora_scale", type=float, default=1.0, help="Semantic adapter scale during source inversion; independent of generation --lora_scale.")
-    parser.add_argument("--semantic_scale", type=float, default=0.8, help="Scale of semantic LoRA branch during generation.")
-    parser.add_argument("--style_scale", type=float, default=2, help="Scale of target-style LoRA branch during generation.")
+    parser.add_argument("--semantic_scale", type=float, default=1.0, help="Scale of semantic LoRA branch during generation.")
+    parser.add_argument("--style_scale", type=float, default=1.0, help="Scale of target-style LoRA branch during generation.")
 
     parser.add_argument("--dtype", type=str, choices=["fp16", "bf16", "fp32"], default="fp16")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")

@@ -126,8 +126,8 @@ def inject_style_lora_into_unet(
     lora_path_or_dir: str,
     target_style_idx: int,
     lora_scale: float = 1.0,
-    semantic_scale: float = 0.8,
-    style_scale: float = 2.0,
+    semantic_scale: float = 1.0,
+    style_scale: float = 1.0,
     debug: bool = False,
 ) -> None:
     lora_path = _normalize_lora_path(lora_path_or_dir)
@@ -334,8 +334,8 @@ def parse_args():
 
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--lora_scale", type=float, default=1.0)
-    parser.add_argument("--semantic_scale", type=float, default=0.8, help="Scale of semantic LoRA branch during generation.")
-    parser.add_argument("--style_scale", type=float, default=2.0, help="Scale of target-style LoRA branch during generation.")
+    parser.add_argument("--semantic_scale", type=float, default=1.0, help="Scale of semantic LoRA branch during generation.")
+    parser.add_argument("--style_scale", type=float, default=1.0, help="Scale of target-style LoRA branch during generation.")
     parser.add_argument("--negative_prompt", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--dtype", type=str, choices=["fp16", "bf16", "fp32"], default="fp16")

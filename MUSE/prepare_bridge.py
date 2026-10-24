@@ -1,4 +1,4 @@
-"""Pool a completed 30-group generation run into one ImageFolder per target."""
+"""Pair DDIM and class-conditioned images into 25 bridge datasets per target."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ import shutil
 from pathlib import Path
 
 try:
-    from .muse import bridge_groups
+    from .muse import bridge_groups, bridge_pairs
 except ImportError:
-    from muse import bridge_groups
+    from muse import bridge_groups, bridge_pairs
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -33,8 +33,9 @@ def validated_group(root: Path, image_root: Path, plan: dict, group: dict, targe
         raise ValueError(f"Generation metadata/configuration changed after completion: {directory}")
     config = json.loads(config_bytes)
     mode = "class_conditioned" if group["generation"] == "pure_noise" else "ddim_inversion"
-    required = {"mode": mode, "lora_scale": group["adapter_strength"]}
-    for key in ["dataset", "seed", "semantic_scale", "style_scale", "source_domain", "num_inference_steps"]:
+    required = {"mode": mode, "lora_scale": 1.0,
+                "semantic_scale": group["semantic_scale"], "style_scale": 1.0}
+    for key in ["dataset", "seed", "source_domain", "num_inference_steps"]:
         plan_key = "source" if key == "source_domain" else key
         if plan_key in plan:
             required[key] = plan[plan_key]
@@ -46,8 +47,11 @@ def validated_group(root: Path, image_root: Path, plan: dict, group: dict, targe
         required["num_images_per_class"] = plan["num_images_per_class"]
     if any(config.get(key) != value for key, value in required.items()):
         raise ValueError(f"Group settings do not match the bridge plan: {directory}")
-    if "checkpoint" in plan and str(Path(config["checkpoint"]["path"]).parent.resolve()) != str(Path(plan["checkpoint"]).resolve()):
-        raise ValueError(f"Group checkpoint does not match the bridge plan: {directory}")
+    if "checkpoint" in plan:
+        checkpoint = Path(plan["checkpoint"]).resolve()
+        recorded = Path(config["checkpoint"]["path"]).resolve()
+        if recorded != checkpoint and recorded.parent != checkpoint:
+            raise ValueError(f"Group checkpoint does not match the bridge plan: {directory}")
 
     rows = [json.loads(line) for line in metadata_bytes.splitlines() if line.strip()]
     expected = completion["expected_images"]
@@ -64,7 +68,8 @@ def validated_group(root: Path, image_root: Path, plan: dict, group: dict, targe
         if (not sample.is_file() or len(relative.parts) < 2 or relative.parts[0] != row["class_name"]
                 or row["class_name"] not in classes or row["label"] != classes.index(row["class_name"])
                 or row["target_domain"] != target or row["mode"] != mode
-                or row["adapter_strength"] != group["adapter_strength"]):
+                or row["adapter_strength"] != 1.0 or row["style_scale"] != 1.0
+                or row["semantic_scale"] != group["semantic_scale"]):
             raise ValueError(f"Invalid generated image record: {sample}")
         if mode == "ddim_inversion" and row["inversion_strength"] != group["inversion_strength"]:
             raise ValueError(f"Inversion strength differs from the group plan: {sample}")
@@ -77,7 +82,7 @@ def validated_group(root: Path, image_root: Path, plan: dict, group: dict, targe
     return images
 
 
-def pooled_row(root, output, image_root, sample, group, target, class_to_idx):
+def pooled_row(root, output, image_root, sample, group, target, class_to_idx, bridge):
     relative = sample.relative_to(image_root)
     destination = output / "images" / relative.parts[0] / group["name"] / Path(*relative.parts[1:])
     stat = sample.stat()
@@ -86,6 +91,8 @@ def pooled_row(root, output, image_root, sample, group, target, class_to_idx):
         "label": class_to_idx[relative.parts[0]], "class_name": relative.parts[0],
         "target_domain": target, "generation": group["generation"],
         "inversion_strength": group["inversion_strength"], "adapter_strength": group["adapter_strength"],
+        "semantic_scale": group["semantic_scale"], "style_scale": 1.0,
+        "bridge": bridge["name"], "bridge_inversion_strength": bridge["inversion_strength"],
         "group_image": sample.relative_to(root).as_posix(),
         "group_metadata": (image_root.parent / "metadata.jsonl").relative_to(root).as_posix(),
         "source_bytes": stat.st_size, "source_mtime_ns": stat.st_mtime_ns,
@@ -107,15 +114,17 @@ def identical_copy(source, destination):
 def prepare(root: Path, link_method: str = "hardlink") -> dict:
     root = root.resolve()
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
-    if plan["groups"] != bridge_groups():
-        raise ValueError("Expected the complete 25 + 5 generation plan.")
+    if (plan.get("schema") != 2 or plan.get("groups") != bridge_groups()
+            or plan.get("bridges") != bridge_pairs()
+            or plan.get("lora_scale") != 1.0 or plan.get("style_scale") != 1.0):
+        raise ValueError("Expected the 5 x 5 inversion/semantic plan with lora_scale=style_scale=1.0. Use a new output directory.")
 
     # Validate every group before creating the pooled dataset.
     inputs = {}
     expected_classes = None
     for target in plan["targets"]:
         domain = safe_domain(target)
-        group_inputs = []
+        group_inputs = {}
         counts_by_method = {}
         for group in plan["groups"]:
             image_root = root / "groups" / group["name"] / domain / "images"
@@ -140,56 +149,75 @@ def prepare(root: Path, link_method: str = "hardlink") -> dict:
             counts_by_method[method] = counts
             if method == "pure_noise" and any(n != plan["num_images_per_class"] for n in counts.values()):
                 raise ValueError(f"Class-conditioned counts do not match plan: {image_root}")
-            group_inputs.append((group, image_root, images))
+            group_inputs[group["name"]] = (group, image_root, images)
         inputs[target] = group_inputs
 
-    report = {"dataset": plan["dataset"], "task": plan["task"], "targets": {}}
-    for target, group_inputs in inputs.items():
-        output = root / "uda" / safe_domain(target)
-        image_output = output / "images"
-        # A completed bridge is immutable. Use a new output directory for another run.
-        manifest = output / "metadata.jsonl"
-        class_to_idx = {name: index for index, name in enumerate(expected_classes)}
-        if manifest.exists():
-            expected_rows = (pooled_row(root, output, image_root, sample, group, target, class_to_idx)[1]
-                             for group, image_root, images in group_inputs for sample in images)
-            count = 0
-            with manifest.open(encoding="utf-8") as stream:
-                rows = (json.loads(line) for line in stream if line.strip())
-                for row, expected_row in itertools.zip_longest(rows, expected_rows):
-                    if row != expected_row or row is None:
-                        raise ValueError(f"Existing bridge does not match generation inputs: {output}")
-                    destination, source = output / row["file_name"], root / row["group_image"]
-                    if not destination.is_file() or not (os.path.samefile(source, destination) or identical_copy(source, destination)):
-                        raise ValueError(f"Pooled image differs from its generation input: {destination}")
-                    count += 1
-            actual_count = sum(1 for p in image_output.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
-            if actual_count != count:
-                raise ValueError(f"Existing bridge does not match generation inputs: {output}")
-            report["targets"][target] = {"images": count, "classes": len(expected_classes), "path": str(image_output.relative_to(root))}
-            continue
+    report = {"schema": 2, "dataset": plan["dataset"], "task": plan["task"],
+              "source": plan["source"], "targets": {}}
+    class_to_idx = {name: index for index, name in enumerate(expected_classes)}
+    for target, available in inputs.items():
+        report["targets"][target] = {"bridges": {}}
+        for bridge in plan["bridges"]:
+            group_inputs = [available[name] for name in bridge["groups"]]
+            output = root / "uda" / safe_domain(target) / bridge["name"]
+            count = assemble(root, output, group_inputs, target, class_to_idx, bridge, link_method)
+            report["targets"][target]["bridges"][bridge["name"]] = {
+                "images": count, "classes": len(expected_classes),
+                "path": (output / "images").relative_to(root).as_posix(),
+                "inversion_strength": bridge["inversion_strength"],
+                "semantic_scale": bridge["semantic_scale"],
+            }
+    temporary = root / "bridge.json.tmp"
+    temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(root / "bridge.json")
+    return report
+
+
+def assemble(root, output, group_inputs, target, class_to_idx, bridge, link_method):
+    image_output = output / "images"
+    manifest = output / "metadata.jsonl"
+    rows = (pooled_row(root, output, image_root, sample, group, target, class_to_idx, bridge)
+            for group, image_root, images in group_inputs for sample in images)
+    count = 0
+    if manifest.exists():
+        with manifest.open(encoding="utf-8") as stream:
+            stored = (json.loads(line) for line in stream if line.strip())
+            for stored_row, expected in itertools.zip_longest(stored, rows):
+                if expected is None or stored_row != expected[1]:
+                    raise ValueError(f"Existing bridge does not match generation inputs: {output}")
+                destination, row = expected
+                source = root / row["group_image"]
+                if not destination.is_file() or not (os.path.samefile(source, destination) or identical_copy(source, destination)):
+                    raise ValueError(f"Bridge image differs from its generation input: {destination}")
+                count += 1
+        mapping = json.loads((output / "classes.json").read_text(encoding="utf-8"))
+        if mapping != class_to_idx:
+            raise ValueError(f"Bridge class indices differ: {output}")
+    else:
         output.mkdir(parents=True, exist_ok=True)
         temporary = output / "metadata.jsonl.tmp"
-        count = 0
         with temporary.open("w", encoding="utf-8") as stream:
-            for group, image_root, images in group_inputs:
-                for sample in images:
-                    destination, row = pooled_row(root, output, image_root, sample, group, target, class_to_idx)
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    if destination.exists():
-                        if not os.path.samefile(sample, destination) and not (link_method == "copy" and identical_copy(sample, destination)):
-                            raise FileExistsError(f"Refusing to replace an existing sample: {destination}")
-                    elif link_method == "copy":
-                        shutil.copy2(sample, destination)
-                    else:
-                        os.link(sample, destination)
-                    stream.write(json.dumps(row) + "\n")
-                    count += 1
-        temporary.replace(manifest)
+            for destination, row in rows:
+                source = root / row["group_image"]
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    if not os.path.samefile(source, destination) and not (link_method == "copy" and identical_copy(source, destination)):
+                        raise FileExistsError(f"Refusing to replace an existing sample: {destination}")
+                elif link_method == "copy":
+                    shutil.copy2(source, destination)
+                else:
+                    os.link(source, destination)
+                stream.write(json.dumps(row) + "\n")
+                count += 1
         (output / "classes.json").write_text(json.dumps(class_to_idx, indent=2) + "\n", encoding="utf-8")
-        report["targets"][target] = {"images": count, "classes": len(expected_classes), "path": str(image_output.relative_to(root))}
-    (root / "bridge.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    return report
+        actual_count = sum(1 for p in image_output.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
+        if actual_count != count:
+            raise ValueError(f"Unexpected images in bridge: {output}")
+        temporary.replace(manifest)
+    actual_count = sum(1 for p in image_output.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
+    if actual_count != count:
+        raise ValueError(f"Unexpected images in bridge: {output}")
+    return count
 
 
 def main() -> None:

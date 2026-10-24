@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from MUSE import muse
+from MUSE import muse, train_uda
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,27 +95,33 @@ class DocumentedCommandsTests(unittest.TestCase):
                     for child in launched:
                         child_script = Path(child[1]).relative_to(ROOT).as_posix()
                         source_parser(child_script).parse_args(child[2:])
+                elif script == "MUSE/train_uda.py":
+                    args, extra = train_uda.build_parser().parse_known_args(command[2:])
+                    self.assertEqual(args.method, "els")
+                    source_parser("UDA/ELS/cdan_mcc_sdat.py").parse_args([
+                        str(args.data_root), "--source-train-dir", "bridge/images",
+                        "--target-train-dir", "real", "--target-test-dir", "real", *extra,
+                    ])
                 else:
                     source_parser(script).parse_args(command[2:])
         self.assertEqual(checked_scripts, {
-            "MUSE/muse.py", "MUSE/prepare_bridge.py",
-            "UDA/ELS/cdan_mcc_sdat.py", "UDA/SSRT/ssrt_sdat.py",
+            "MUSE/muse.py", "MUSE/train_uda.py",
         })
 
-    def test_documented_minidomainnet_arguments_and_evaluation_options(self):
-        fragments = [command for command in self.commands if command[0] == "--target-train-dir"]
-        self.assertEqual(len(fragments), 1)
-        for script in ["UDA/ELS/cdan_mcc_sdat.py", "UDA/SSRT/ssrt_sdat.py"]:
-            command = next(command for command in self.commands if len(command) > 1 and command[1] == script)
-            options = command[2:] + fragments[0] + ["--phase", "test"]
-            if script.startswith("UDA/SSRT"):
-                options += ["--checkpoint", "logs/ssrt_office31_A2D/best.pth"]
-            with self.subTest(script=script):
-                parsed = source_parser(script).parse_args(options)
-                self.assertEqual(parsed.phase, "test")
-                self.assertTrue(parsed.target_train_list.endswith("real_train.txt"))
-                self.assertTrue(parsed.target_test_list.endswith("real_test.txt"))
-                self.assertEqual(parsed.target_train_dir, "data/minidomainnet/domainnet/real")
+    def test_documented_ssrt_method_switch(self):
+        command = next(command for command in self.commands if command[:2] == ["python", "MUSE/train_uda.py"])
+        options = list(command[2:])
+        options[options.index("--method") + 1] = "ssrt"
+        options[options.index("--arch") + 1] = "vit_b_16"
+        index = options.index("--eps")
+        del options[index:index + 2]
+        args, extra = train_uda.build_parser().parse_known_args(options)
+        self.assertEqual(args.method, "ssrt")
+        parsed = source_parser("UDA/SSRT/ssrt_sdat.py").parse_args([
+            "--source-train-dir", "bridge/images", "--target-train-dir", "real",
+            "--target-test-dir", "real", "--log", "logs/ssrt", *extra,
+        ])
+        self.assertEqual(parsed.arch, "vit_b_16")
 
     def test_training_recipe_and_resume_flags_parse(self):
         command = next(command for command in self.commands if command[:3] == ["python", "MUSE/muse.py", "train"])

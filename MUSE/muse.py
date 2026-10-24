@@ -223,21 +223,38 @@ def _generate(args: argparse.Namespace, extra: Sequence[str]) -> int:
 def bridge_groups() -> list[dict]:
     groups = []
     for inversion in STRENGTHS:
-        for adapter in STRENGTHS:
+        for semantic in STRENGTHS:
             groups.append({
-                "name": f"ddim_inv_{inversion:.1f}_adapter_{adapter:.1f}",
+                "name": f"ddim_inv_{inversion:.1f}_semantic_{semantic:.1f}",
                 "generation": "ddim_inversion",
                 "inversion_strength": inversion,
-                "adapter_strength": adapter,
+                "adapter_strength": 1.0,
+                "semantic_scale": semantic,
+                "style_scale": 1.0,
             })
-    for adapter in STRENGTHS:
+    for semantic in STRENGTHS:
         groups.append({
-            "name": f"class_condition_adapter_{adapter:.1f}",
+            "name": f"class_condition_semantic_{semantic:.1f}",
             "generation": "pure_noise",
             "inversion_strength": None,
-            "adapter_strength": adapter,
+            "adapter_strength": 1.0,
+            "semantic_scale": semantic,
+            "style_scale": 1.0,
         })
     return groups
+
+
+def bridge_pairs() -> list[dict]:
+    return [
+        {
+            "name": f"inv_{inversion:.1f}_semantic_{semantic:.1f}",
+            "inversion_strength": inversion,
+            "semantic_scale": semantic,
+            "groups": [f"ddim_inv_{inversion:.1f}_semantic_{semantic:.1f}",
+                       f"class_condition_semantic_{semantic:.1f}"],
+        }
+        for inversion in STRENGTHS for semantic in STRENGTHS
+    ]
 
 
 def _bridge(args: argparse.Namespace, extra: Sequence[str]) -> int:
@@ -250,6 +267,7 @@ def _bridge(args: argparse.Namespace, extra: Sequence[str]) -> int:
     source, targets, task = _resolve_domains(args)
     root = Path(args.output_dir or _output_dir(args.output_root, "bridge", args.dataset, task))
     plan = {
+        "schema": 2,
         "dataset": args.dataset, "task": task, "source": source,
         "targets": targets, "seed": args.seed,
         "checkpoint": str(Path(args.checkpoint_dir).resolve()),
@@ -265,8 +283,9 @@ def _bridge(args: argparse.Namespace, extra: Sequence[str]) -> int:
         "guidance_scale": args.guidance_scale,
         "generation_guidance_scale": args.generation_guidance_scale,
         "inversion_guidance_scale": args.inversion_guidance_scale,
-        "semantic_scale": args.semantic_scale, "style_scale": args.style_scale,
+        "lora_scale": 1.0, "style_scale": 1.0, "semantic_scales": list(STRENGTHS),
         "groups": bridge_groups(),
+        "bridges": bridge_pairs(),
     }
     if not args.dry_run:
         root.mkdir(parents=True, exist_ok=True)
@@ -275,14 +294,14 @@ def _bridge(args: argparse.Namespace, extra: Sequence[str]) -> int:
             raise SystemExit("This output directory contains a different generation plan. Choose a new --output_dir.")
         plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
 
-    print(f"Bridge: {len(plan['groups'])} groups for each target: {', '.join(targets)}", flush=True)
+    print(f"25 bridge datasets per target: {', '.join(targets)}", flush=True)
     for group in plan["groups"]:
         generation_args = argparse.Namespace(**vars(args))
         generation_args.generation = group["generation"]
         generation_args.output_dir = str(root / "groups" / group["name"])
         options = [
-            "--seed", str(args.seed), "--lora_scale", str(group["adapter_strength"]),
-            "--semantic_scale", str(args.semantic_scale), "--style_scale", str(args.style_scale),
+            "--seed", str(args.seed), "--lora_scale", "1.0",
+            "--semantic_scale", str(group["semantic_scale"]), "--style_scale", "1.0",
             "--num_inference_steps", str(args.num_inference_steps),
             "--dtype", args.dtype,
         ]
@@ -339,19 +358,19 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--checkpoint_dir", default=None)
     generate.set_defaults(func=_generate)
 
-    bridge = subparsers.add_parser("bridge", help="Generate the 25 DDIM + 5 class-conditioned groups and pool them for UDA.")
+    bridge = subparsers.add_parser("bridge", help="Generate 25 DDIM/class-conditioned bridge pairs per target.")
     _add_common(bridge)
     bridge.add_argument("--checkpoint_dir", required=True)
     bridge.add_argument("--seed", type=int, default=0)
-    bridge.add_argument("--num_images_per_class", type=int, default=50, help="Class-conditioned images per class in each adapter group.")
+    bridge.add_argument("--num_images_per_class", type=int, default=50, help="Class-conditioned images per class at each semantic scale.")
     bridge.add_argument("--max_images_per_class", type=int, default=0, help="Source images per class for each DDIM group; 0 uses all images.")
     bridge.add_argument("--num_inference_steps", type=int, default=50)
     bridge.add_argument("--num_inversion_steps", type=int, default=50)
     bridge.add_argument("--guidance_scale", type=float, default=7.5)
     bridge.add_argument("--generation_guidance_scale", type=float, default=1.0, help="DDIM translation guidance.")
     bridge.add_argument("--inversion_guidance_scale", type=float, default=1.0)
-    bridge.add_argument("--semantic_scale", type=float, default=0.8)
-    bridge.add_argument("--style_scale", type=float, default=2.0)
+    bridge.add_argument("--lora_scale", type=float, choices=[1.0], default=1.0)
+    bridge.add_argument("--style_scale", type=float, choices=[1.0], default=1.0)
     bridge.add_argument("--resolution", type=int, default=1024, help="DDIM source long-side resolution.")
     bridge.add_argument("--height", type=int, default=1024)
     bridge.add_argument("--width", type=int, default=1024)

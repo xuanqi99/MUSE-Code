@@ -107,12 +107,33 @@ class GenerationContractTest(unittest.TestCase):
                     "--pretrained_model_name_or_path", "sdxl", "--dry_run",
                 ])
             self.assertEqual(len(commands), 31)
+            ddim_combinations = set()
+            class_conditioned_scales = set()
             for command in commands[:-1]:
                 filename = Path(command[1]).name
                 with self.subTest(dataset=dataset, filename=filename, output=command[command.index("--output_dir") + 1]):
                     parsed = parsers[filename].parse_args(command[2:])
-                    self.assertIn(parsed.lora_scale, muse.STRENGTHS)
+                    self.assertEqual(parsed.lora_scale, 1.0)
+                    self.assertEqual(parsed.style_scale, 1.0)
+                    self.assertIn(parsed.semantic_scale, muse.STRENGTHS)
                     self.assertIsNotNone(parsed.source_domain)
+                    if filename == "generate_ddim_inversion.py":
+                        self.assertEqual(parsed.inversion_lora_scale, 1.0)
+                        ddim_combinations.add((parsed.inversion_end_ratio, parsed.semantic_scale))
+                    else:
+                        class_conditioned_scales.add(parsed.semantic_scale)
+            self.assertEqual(ddim_combinations, {(i, s) for i in muse.STRENGTHS for s in muse.STRENGTHS})
+            self.assertEqual(class_conditioned_scales, set(muse.STRENGTHS))
+
+    def test_standalone_scales_default_to_one(self):
+        for filename in ["generate_ddim_inversion.py", "generate_pure_noise.py"]:
+            with self.subTest(filename=filename):
+                parser = generation_parser(filename)
+                args = parser.parse_args([
+                    "--pretrained_model_name_or_path", "sdxl", "--checkpoint_dir", "checkpoint",
+                    "--output_dir", "generated",
+                ])
+                self.assertEqual((args.lora_scale, args.semantic_scale, args.style_scale), (1.0, 1.0, 1.0))
 
     def test_partial_ddim_uses_matching_endpoint(self):
         source = ROOT / "MUSE/generate_ddim_inversion.py"
