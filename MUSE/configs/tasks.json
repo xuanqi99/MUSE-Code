@@ -1,0 +1,75 @@
+{
+  "office31": {
+    "domains": {
+      "A": "amazon",
+      "D": "dslr",
+      "W": "webcam"
+    },
+    "tasks": {
+      "A2DW": {
+        "source": "amazon",
+        "targets": ["dslr", "webcam"]
+      },
+      "D2AW": {
+        "source": "dslr",
+        "targets": ["amazon", "webcam"]
+      },
+      "W2AD": {
+        "source": "webcam",
+        "targets": ["amazon", "dslr"]
+      }
+    }
+  },
+  "officehome": {
+    "domains": {
+      "A": "Art",
+      "C": "Clipart",
+      "P": "Product",
+      "R": "Real World"
+    },
+    "tasks": {
+      "A2CPR": {
+        "source": "Art",
+        "targets": ["Clipart", "Product", "Real World"]
+      },
+      "C2APR": {
+        "source": "Clipart",
+        "targets": ["Art", "Product", "Real World"]
+      },
+      "P2ACR": {
+        "source": "Product",
+        "targets": ["Art", "Clipart", "Real World"]
+      },
+      "R2ACP": {
+        "source": "Real World",
+        "targets": ["Art", "Clipart", "Product"]
+      }
+    }
+  },
+  "minidomainnet": {
+    "domains": {
+      "C": "clipart",
+      "P": "painting",
+      "R": "real",
+      "S": "sketch"
+    },
+    "tasks": {
+      "C2PRS": {
+        "source": "clipart",
+        "targets": ["painting", "real", "sketch"]
+      },
+      "P2CRS": {
+        "source": "painting",
+        "targets": ["clipart", "real", "sketch"]
+      },
+      "R2CPS": {
+        "source": "real",
+        "targets": ["clipart", "painting", "sketch"]
+      },
+      "S2CPR": {
+        "source": "sketch",
+        "targets": ["clipart", "painting", "real"]
+      }
+    }
+  }
+}

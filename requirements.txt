@@ -1,0 +1,15 @@
+accelerate
+diffusers
+huggingface_hub
+numpy
+packaging
+Pillow
+prettytable
+safetensors
+scikit-learn
+tensorboard
+timm
+torch
+torchvision
+tqdm
+transformers
