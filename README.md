@@ -92,8 +92,6 @@ Average target accuracy (%) reported in the paper:
 | Office-Home | 76.53 | 77.57 | 88.15 |
 | miniDomainNet | 64.02 | 65.04 | 84.37 |
 
-These are published results; the revised 25-bridge configuration has not been benchmarked.
-
 ## Citation
 
 ```bibtex
