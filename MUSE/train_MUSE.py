@@ -73,7 +73,6 @@ try:
     from diffusers.loaders import LoraLoaderMixin
 except ImportError:
     from diffusers.loaders import StableDiffusionLoraLoaderMixin as LoraLoaderMixin
-# from diffusers.models.lora import LoRALinearLayer
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_snr
 from diffusers.utils import check_min_version, is_wandb_available
@@ -303,13 +302,11 @@ def ensure_lora_compatible_linear(module: nn.Module) -> nn.Module:
     module.get_lora_layer = _get_lora_layer.__get__(module, module.__class__)
     module.forward = _lora_forward.__get__(module, module.__class__)
     return module
-# Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.24.0.dev0")
 
 logger = get_logger(__name__)
 
 
-# TODO: This function should be removed once training scripts are rewritten in PEFT
 def text_encoder_lora_state_dict(text_encoder):
     state_dict = {}
 
@@ -379,30 +376,13 @@ license: openrail++
     """
 
     model_card = f"""
-# MUSE SDXL LoRA - {repo_id}
+# MUSE - {repo_id}
 
-<Gallery />
-
-## Model description
-
-These are {repo_id} LoRA adaption weights for {base_model}.
-
-The weights were trained with the MUSE fine-tuning pipeline.
-
-LoRA for the text encoder was enabled: {train_text_encoder}.
-
-Special VAE used for training: {vae_path}.
-
-## Trigger words
-
-You should use {instance_prompt} to trigger the image generation.
-
-## Download model
-
-Weights for this model are available in Safetensors format.
-
-[Download]({repo_id}/tree/main) them in the Files & versions tab.
-
+- Base model: `{base_model}`
+- Fine-tuning method: MUSE
+- Text encoder LoRA trained: `{train_text_encoder}`
+- Training prompt: `{instance_prompt}`
+- VAE override: `{vae_path}`
 """
     with open(os.path.join(repo_folder, "README.md"), "w") as f:
         f.write(yaml + model_card)
@@ -945,7 +925,6 @@ def parse_args(input_args=None):
         ),
     )
 
-    # NEW: concept-token related args
     parser.add_argument(
         "--use_concept_tokens",
         action="store_true",
@@ -1063,7 +1042,6 @@ def parse_args(input_args=None):
         default=1.0,
         help="Scaling factor applied to target-domain concept tokens before concatenation.",
     )
-    # /
     parser.add_argument(
         "--gen_concept_image",
         type=str,
@@ -1110,7 +1088,6 @@ def parse_args(input_args=None):
     else:
         args = parser.parse_args()
 
-    # NEW: relax / auto-fill dataset_name / instance_data_dir constraint for folder-style datasets
     if args.dataset in {"officehome", "office31", "minidomainnet"}:
         if args.dataset_name is not None and args.instance_data_dir is not None:
             raise ValueError("Specify only one of `--dataset_name` or `--instance_data_dir`")
@@ -1214,7 +1191,6 @@ def parse_args(input_args=None):
 
     return args
 
-#### update domain!!!! [begin]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -1347,7 +1323,6 @@ class MUSEDomainDataset():
             self.available_target_domain_indices = [0] if self.num_instance_images2 > 0 else []
             self.target_sampling_probs = torch.ones(self.num_target_domains, dtype=torch.float32)
         else:
-            # Original OfficeHome domain-folder logic
             self.instance_root = Path(instance_data_root)
             self.train_split_dir = Path(train_split_dir) if train_split_dir is not None else None
             self.instance_data_root1 = self.instance_root / source_domain
@@ -1517,7 +1492,6 @@ class MUSEDomainDataset():
 
         return example
 
-#### update domain!!!! [/end]
 
 
 def collate_fn(examples, with_prior_preservation=False):
@@ -1560,7 +1534,6 @@ def tokenize_prompt(tokenizer, prompt):
     text_input_ids = text_inputs.input_ids
     return text_input_ids
 
-#### update domain!!!! [/begin]
 
 class PromptDataset(Dataset):
     "A simple dataset to prepare the prompts to generate class images on multiple GPUs."
@@ -1579,7 +1552,6 @@ class PromptDataset(Dataset):
         example["index"] = index
         return example
 
-#### update domain!!!! [/end]
 
 # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
@@ -1598,7 +1570,6 @@ def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
             output_hidden_states=True,
         )
 
-        # We are only ALWAYS interested in the pooled output of the final text encoder
         pooled_prompt_embeds = prompt_embeds[0]
         prompt_embeds = prompt_embeds.hidden_states[-2]
         bs_embed, seq_len, _ = prompt_embeds.shape
@@ -1609,7 +1580,6 @@ def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
     pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
     return prompt_embeds, pooled_prompt_embeds
 
-# ====  ====
 
 def _preprocess_concept_image(img_path: str, resolution: int, center_crop: bool):
     img = Image.open(img_path).convert("RGB")
@@ -1640,7 +1610,6 @@ def _parse_token_indices(spec: Optional[str], max_count: int):
     return idxs
 
 def _apply_time_conditioned_lora_to_pipeline(pipeline, lora_state_dict: dict, time_t: float):
-    #  lora ( down/up/diagnal) dW  pipeline.unet
     for k, v in lora_state_dict.items():
         if not k.endswith("down.weight"):
             continue
@@ -1655,7 +1624,6 @@ def _apply_time_conditioned_lora_to_pipeline(pipeline, lora_state_dict: dict, ti
         matrix = omegas_weights * time_t + eye
         dW = b1 @ (matrix.T) @ a1
         target_layer = target_layer_from_sd_name(k)
-        #  dW
         eval(f'pipeline.unet.{target_layer}').weight.data += dW.to(
             eval(f'pipeline.unet.{target_layer}').weight.data.dtype
         ).to(pipeline.device)
@@ -1666,7 +1634,6 @@ def _load_concept_encoder_for_inference(pipeline, args, device):
             "Encoder4 is unavailable. Install/enable `ldm.modules.diffusionmodules.openaimodel_enc` "
             "before using concept-token inference."
         )
-    #  pipeline.encode_prompt
     pe, _ = pipeline.encode_prompt(
         prompt=["x"],
         device=device,
@@ -1687,7 +1654,6 @@ def _load_concept_encoder_for_inference(pipeline, args, device):
     enc.eval()
     return enc, embed_dim
 
-# ====  ====
 
 def main(args):
     officehome_all_domains = ["Art", "Clipart", "Product", "Real World"]
@@ -2020,7 +1986,6 @@ def main(args):
         text_lora_parameters_two = LoraLoaderMixin._modify_text_encoder(
             text_encoder_two, dtype=torch.float32, rank=args.rank
         )
-        # NEW: define optimizer groups for text encoders
         text_lora_parameters_one_with_lr = {
             "params": text_lora_parameters_one,
             "lr": args.text_encoder_lr,
@@ -2032,7 +1997,6 @@ def main(args):
             "weight_decay": args.adam_weight_decay_text_encoder,
         }
 
-    # NEW: Instantiate Encoder4 for per-image concept tokens (lazy-dimensioned to match prompt embeddings)
     concept_encoder = None
     prompt_embed_dim = None
     if args.use_concept_tokens:
@@ -2066,7 +2030,6 @@ def main(args):
             unet_lora_layers_to_save = None
             text_encoder_one_lora_layers_to_save = None
             text_encoder_two_lora_layers_to_save = None
-            # ...existing code up to model loop...
             for model in models:
                 if isinstance(model, type(accelerator.unwrap_model(unet))):
                     unet_lora_layers_to_save = unet_lora_state_dict(model)
@@ -2082,21 +2045,18 @@ def main(args):
                     text_encoder_two_lora_layers_to_save = text_encoder_lora_state_dict(
                         model
                     )
-                # NEW: persist Encoder4 weights if present
                 elif concept_encoder is not None and isinstance(model, type(accelerator.unwrap_model(concept_encoder))):
                     enc_path = os.path.join(output_dir, "concept_encoder.pt")
                     torch.save(model.state_dict(), enc_path)
                 else:
                     pass
                 weights.pop()
-            # NEW:  concept_encoder isinstance
             if concept_encoder is not None:
                 try:
                     ce = accelerator.unwrap_model(concept_encoder)
                 except Exception:
                     ce = concept_encoder
                 torch.save(ce.state_dict(), os.path.join(output_dir, "concept_encoder.pt"))
-            # ...existing code to save_lora_weights...
             save_muse_weights(
                 output_dir,
                 unet_lora_layers=unet_lora_layers_to_save,
@@ -2132,7 +2092,6 @@ def main(args):
                 raise ValueError("Checkpoint target-domain order differs from --target_domains.")
         lora_state_dict = load_muse_weights(input_dir)
         restore_muse_unet(unet_, lora_state_dict)
-        # ...existing code for text encoders...
         text_encoder_state_dict = {
             k: v for k, v in lora_state_dict.items() if "text_encoder." in k
         }
@@ -2152,7 +2111,6 @@ def main(args):
                 text_encoder=text_encoder_two_,
                 prefix="text_encoder_2",
             )
-        # NEW:  concept_encoder models
         enc_path = os.path.join(input_dir, "concept_encoder.pt")
         if concept_encoder_ is not None and os.path.exists(enc_path):
             try:
@@ -2165,7 +2123,6 @@ def main(args):
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
 
-    # ...existing code (TF32, scale_lr)...
 
     # Optimization parameter groups
     unet_lora_parameters_with_lr1 = {
@@ -2176,9 +2133,7 @@ def main(args):
         "params": unet_lora_parameters2,
         "lr": args.learning_rate * args.lr_theta,
     }
-    # ...existing code building params_to_optimize for text encoders...
 
-    # NEW: add Encoder4 params to optimizer if enabled
     if args.use_concept_tokens and concept_encoder is not None:
         encoder_parameters_with_lr = {
             "params": concept_encoder.parameters(),
@@ -2484,7 +2439,6 @@ def main(args):
     if accelerator.is_main_process:
         accelerator.init_trackers("dreambooth-lora-sd-xl", config=vars(args))
 
-    # Train!
     total_batch_size = (
         args.train_batch_size
         * accelerator.num_processes
@@ -2586,7 +2540,6 @@ def main(args):
                 prompt_embeds, unet_add_text_embeds = compute_text_embeddings(
                     prompts1, text_encoders, tokenizers
                 )
-                # NEW: build concept tokens from source images and concatenate
                 if args.use_concept_tokens and concept_encoder is not None:
                     bsz = pixel_values1.size(0)
                     # Encoder4 expects float32
@@ -2619,7 +2572,6 @@ def main(args):
                         "text_embeds": unet_add_text_embeds.repeat(elems_to_repeat_text_embeds, 1),
                     }
                     prompt_embeds_input = prompt_embeds.repeat(elems_to_repeat_text_embeds, 1, 1)
-                    # NEW: concat source concept tokens
                     if args.use_concept_tokens and concept_encoder is not None:
                         src_tokens_rep = src_tokens.repeat(elems_to_repeat_text_embeds, 1, 1)
                         prompt_embeds_input = torch.cat([prompt_embeds_input, src_tokens_rep], dim=1)
@@ -2959,7 +2911,6 @@ def main(args):
                     else None
                 )
 
-                #  token
                 if args.use_concepts_in_validation and args.gen_concept_image:
                     #
                     enc, embed_dim = _load_concept_encoder_for_inference(pipeline, args, accelerator.device)
@@ -2975,7 +2926,6 @@ def main(args):
                         accelerator.device, dtype=torch.float32
                     )
 
-                    # selection: indices > num_tokens > all
                     if args.gen_token_indices:
                         sel_idx = _parse_token_indices(args.gen_token_indices, args.concept_token_count)
                     elif args.gen_num_tokens is not None:
@@ -3088,7 +3038,6 @@ def main(args):
         )
         save_muse_config(args.output_dir, args, target_domain_names)
 
-        #  concept_encoder
         if args.use_concept_tokens and concept_encoder is not None:
             try:
                 ce = accelerator.unwrap_model(concept_encoder).to(torch.float32)
@@ -3096,7 +3045,6 @@ def main(args):
                 ce = concept_encoder
             torch.save(ce.state_dict(), os.path.join(args.output_dir, "concept_encoder.pt"))
 
-        # remove unuse models for save GPU memory
         unet = unet.cpu()
         text_encoder_one = text_encoder_one.cpu()
         text_encoder_two = text_encoder_two.cpu()
