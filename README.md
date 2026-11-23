@@ -4,7 +4,7 @@
 
 Xuan Qi, Yi Wei, Daniele Berardini, Vito Paolo Pastore, Vittorio Murino
 
-[Paper](https://arxiv.org/abs/2609.33716) · [Project page](https://xuanqi99.github.io/MUSE/) · [Code](https://github.com/xuanqi99/MUSE-Code)
+[Paper](https://openreview.net/forum?id=u8WasX4zQq#discussion) · [Project page](https://xuanqi99.github.io/MUSE/) · [Code](https://github.com/xuanqi99/MUSE-Code)
 
 MUSE uses shared semantic and target-specific style adapters to generate bridge data for unsupervised domain adaptation.
 
